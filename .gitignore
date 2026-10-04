@@ -1,0 +1,6 @@
+# WiFi credentials: copy device/clawd_secrets.example.py instead
+device/clawd_secrets.py
+build/
+*.mpy
+__pycache__/
+.DS_Store

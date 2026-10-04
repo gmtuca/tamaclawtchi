@@ -1,0 +1,5 @@
+pyserial==3.5
+# Must match the device's MicroPython 1.27 (mpy format v6.3)
+mpy-cross==1.27.0.post2
+# Only needed to flash UIFlow firmware onto a new device
+esptool>=4.8
