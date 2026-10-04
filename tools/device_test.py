@@ -1,7 +1,7 @@
 # On-device test for Clawd (runs ON the Cardputer): python3 tools/run_on_device.py tools/device_test.py --fresh --reset-after
-# Exercises every scene, event, side activity, weather kind, holiday and key through the real code.
-# It cannot see the screen: the drawing buffer here is usually 0x0 (memory is only free at boot),
-# so draws are no-ops. It catches crashes and logic errors; a human must judge the visuals.
+# Exercises every scene, event, side activity, weather kind, holiday and key through the real code,
+# in the same start-up order as run(). --fresh boots without Clawd so memory matches a real boot.
+# It can't see the screen; use tools/render_screenshots.py for visuals.
 import builtins
 import gc
 import time
@@ -19,20 +19,32 @@ def check(name, ok, info=""):
         fails += 1
 
 
-g = c.G()
-
-# Network first, while memory still looks like a fresh boot.
-c.sync(g)
-check("weather fetched at boot", g.temp is not None, (g.temp, g.hum, g.wk))
-check("clock set", c.clock_ok(), time.localtime())
-check("wifi off after sync", not c.network.WLAN(c.network.STA_IF).active())
-
+# Same order as run(): drawing buffer, then WiFi, then speaker set-up and the memory reserve.
 C = c.L.newCanvas(c.W, c.PH, 16, 0)
+check("full-size drawing buffer at boot", (C.width(), C.height()) == (c.W, c.PH), (C.width(), C.height()))
 try:
     C.setFont(c.L.FONTS.DejaVu9)
 except Exception:
     pass
-print("INFO drawing buffer in this test:", C.width(), "x", C.height())
+g = c.G()
+c.sync(g)
+check("weather fetched at boot", g.temp is not None, (g.temp, g.hum, g.wk))
+check("clock set", c.clock_ok(), time.localtime())
+check("wifi off after sync", not c.network.WLAN(c.network.STA_IF).active())
+c.M5.Speaker.tone(18000, 20)
+time.sleep_ms(60)
+c.M5.Speaker.stop()
+c.reserve(g, True)
+import esp32
+info = esp32.idf_heap_info(esp32.HEAP_DATA)
+print("INFO before reserve: free", sum(b[1] for b in info), "largest", max(b[2] for b in info))
+for _ in range(7):   # stats() retries every 5 s while network buffers drain
+    if g.res is not None:
+        break
+    time.sleep(5)
+    c.reserve(g, True)
+print("INFO memory reserve:", g.res and (g.res.width(), g.res.height()),
+      "(often None here: compiling this test uses memory; tools/boot_check.py checks a real boot)")
 f = 0
 
 
@@ -138,6 +150,13 @@ at(12, 0)
 frames(2)
 c.stats(g, 0.1, 720)
 check("hunger shows the fish bubble", g.bub == "fish", g.bub)
+
+c.read_battery(g)
+check("battery level reads 0-100", g.bat is not None and 0 <= g.bat <= 100, (g.bat, g.chg))
+for g.bat, g.chg in ((9, False), (9, True), (60, False)):
+    for i in range(10):
+        c.hud(g, 720, i, i == 0)
+check("battery icon draws when low, charging and normal", True)
 
 gc.collect()
 print("INFO free memory", gc.mem_free())

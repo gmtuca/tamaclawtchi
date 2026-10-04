@@ -55,6 +55,9 @@ class Surface:
     def drawCircle(self, x, y, r, c):
         self.d.ellipse([x - r, y - r, x + r, y + r], outline=rgb(c))
 
+    def drawRect(self, x, y, w, h, c):
+        self.d.rectangle([x, y, x + w - 1, y + h - 1], outline=rgb(c))
+
     def fillEllipse(self, x, y, rx, ry, c):
         self.d.ellipse([x - rx, y - ry, x + rx, y + ry], fill=rgb(c))
 
@@ -112,6 +115,7 @@ def load_clawd():
     m5 = types.ModuleType("M5")
     m5.Lcd = LCD
     m5.Speaker = types.SimpleNamespace(tone=lambda *a: None, stop=lambda: None)
+    m5.Power = types.SimpleNamespace(getBatteryLevel=lambda: 78, isCharging=lambda: False)
     m5.begin = lambda: None
     machine = types.ModuleType("machine")
     machine.reset = lambda: None
@@ -137,11 +141,11 @@ def load_clawd():
 c = load_clawd()
 
 
-def shot(name, hh, mm, frames, wk=None, temp=16.4, hum=72, hol=None, side=None, at=None):
+def shot(name, hh, mm, frames, wk=None, temp=16.4, hum=72, hol=None, side=None, at=None, bat=78, chg=False):
     """Run the real code for `frames` frames at hh:mm and save the last frame. `at(g, f)` runs before each frame."""
     random.seed(7)
     g = c.G()
-    g.temp, g.hum, g.hol = temp, hum, hol
+    g.temp, g.hum, g.hol, g.bat, g.chg = temp, hum, hol, bat, chg
     g.wk = c.PARTLY if wk is None else wk
     c.live_secs = lambda: (hh * 60 + mm) * 60   # a live clock, so the header has no time-travel "~"
     if side is not None:

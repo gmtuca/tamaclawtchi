@@ -1,6 +1,7 @@
 # Clawd: a desk pet that follows your day. tools/deploy.py compiles this to /flash/clawd_core.mpy
 # (the device can't compile a file this size) and device/main.py imports it at boot. See README.md.
 
+import builtins   # clawd_buf / clawd_res are published here; they survive Ctrl-C (see tools/boot_check.py)
 import json
 import random
 import socket
@@ -908,6 +909,7 @@ class G:
         self.ball, self.score, self.ojy, self.ovy = None, [0, 0], 0, 0
         self.hol, self.help, self.temp, self.hum, self.wk = None, 0, None, None, CLEAR
         self.net_t, self.next_net, self.next_ntp, self.res = None, 0, 0, None
+        self.bat, self.chg = None, False
 
 
 def play(g, notes, reply=False):
@@ -1089,9 +1091,14 @@ def stats(g, mins, m):
     g.j = cap(g.j + mins * J_RATE[sc])
     g.s = cap(g.s + mins * S_RATE[sc])
     g.hol = holiday()
+    read_battery(g)
+    if g.res is None and g.net_t is None:
+        reserve(g, True)
     if sc == SLEEP:
         return
-    if g.hol and not g.bub and rnd(60) == 0:
+    if g.bat is not None and g.bat < 15 and not g.chg and not g.bub and rnd(40) == 0:
+        g.bub, g.bub_t = "low!", 40
+    elif g.hol and not g.bub and rnd(60) == 0:
         g.bub, g.bub_t = GREET[g.hol], 40
     # About one spontaneous side activity per 45 minutes awake, at least 30 minutes apart.
     if (g.side is None and scene_at(m) not in (COMMUTE, READ)
@@ -1163,6 +1170,24 @@ def key(g, k):
             g.fq += 1
 
 
+def read_battery(g):
+    try:
+        g.bat = M5.Power.getBatteryLevel()
+        g.chg = bool(M5.Power.isCharging())
+    except Exception:
+        g.bat = None
+
+
+def battery(x, y, lvl, chg, blink_off):
+    L.drawRect(x, y, 14, 8, GR)
+    L.fillRect(x + 14, y + 2, 2, 4, GR)
+    if not blink_off:
+        L.fillRect(x + 2, y + 2, max(1, lvl * 10 // 100), 4, GN if lvl > 50 else YL if lvl > 20 else RD)
+    if chg:
+        L.fillTriangle(x + 8, y - 1, x + 4, y + 4, x + 8, y + 4, CR)
+        L.fillTriangle(x + 6, y + 3, x + 10, y + 3, x + 6, y + 9, CR)
+
+
 def hud(g, m, f, force):
     sc = g.scene
     if sc == EAT and m >= 900:
@@ -1175,15 +1200,22 @@ def hud(g, m, f, force):
         lab += " %dm" % (time.ticks_diff(g.side_end, time.ticks_ms()) // 60000 + 1)
     live = g.sim is None
     ck = "%02d:%02d" % (m // 60, m % 60) if clock_ok() or not live else "--:--"
-    hk = (lab, ck, live, g.mute, g.temp, g.hum)
+    low = g.bat is not None and g.bat < 15 and not g.chg
+    blink_off = low and (f // 8) % 2
+    hk = (lab, ck, live, g.mute, g.temp, g.hum, g.bat, g.chg, blink_off)
     if force or hk != g.hk:
         g.hk = hk
         L.fillRect(0, 0, W, 20, DK)
         L.fillRect(0, 20, W, 1, OR)
         L.setTextColor(OR, DK)
         L.drawString(lab, 6, 5)
+        x = W - 4
+        if g.bat is not None:
+            x -= 16
+            battery(x, 6, g.bat, g.chg, blink_off)
+            x -= 6
         s = ck if live else "~" + ck
-        x = W - 6 - L.textWidth(s)
+        x -= L.textWidth(s)
         L.setTextColor(CR if live else YL, DK)
         L.drawString(s, x, 5)
         if g.temp is not None:
@@ -1292,15 +1324,23 @@ def fetch_weather(g):
         return False
 
 
+RESERVE_SIZES = ((120, 100), (100, 80), (80, 64))   # 24, 16 and 10 KB canvases
+
+
 def reserve(g, hold):
     # MicroPython's heap grows into free system memory and never gives it back, which
-    # would eventually leave WiFi no room to start. An unused 24 KB buffer keeps that
-    # memory claimed between weather checks; it is released just before WiFi starts.
+    # would eventually leave WiFi no room to start. An unused buffer keeps that memory
+    # claimed between weather checks and is released just before WiFi starts. Right after
+    # a fetch the network stack still holds some buffers, so stats() retries every 5 s.
     if hold and g.res is None:
-        r = L.newCanvas(120, 100, 16, 0)
-        g.res = r if r.width() else None
-        if g.res is None:
-            print("clawd: could not reserve memory for WiFi")
+        for w, h in RESERVE_SIZES:
+            r = L.newCanvas(w, h, 16, 0)
+            if r.width():
+                g.res = r
+                builtins.clawd_res = w * h * 2
+                return
+            r.delete()   # a failed canvas leaks ~356 bytes of system memory unless deleted
+        builtins.clawd_res = 0
     elif not hold and g.res is not None:
         g.res.delete()
         g.res = None
@@ -1389,8 +1429,7 @@ def run():
         L.setTextColor(RD, BK)
         L.drawString("Clawd: no memory for the drawing buffer", 6, 60)
         return
-    import builtins
-    builtins.clawd_buf = (C.width(), C.height())  # readable from the REPL as `clawd_buf`
+    builtins.clawd_buf = (C.width(), C.height())
     L.setTextColor(OR, BK)
     L.drawString("Clawd is waking up...", 58, 58)
     L.setTextColor(GR, BK)
@@ -1407,6 +1446,7 @@ def run():
         pass
     reserve(g, True)
     g.hol = holiday()
+    read_battery(g)
     load(g)
     try:
         g.br = L.getBrightness()
@@ -1417,8 +1457,12 @@ def run():
     time.sleep_ms(300)
     f = 0
     t_stats = t_save = time.ticks_ms()
+    # Hardware watchdog: if the loop (or the firmware under it) freezes for a minute, the chip
+    # restarts into Clawd. It can't be stopped once started; see the KeyboardInterrupt handler.
+    wdt = machine.WDT(timeout=60000)
     try:
         while True:
+            wdt.feed()
             t0 = time.ticks_ms()
             kb.tick()
             k = kb.get_key()
@@ -1441,8 +1485,15 @@ def run():
             d = 75 - time.ticks_diff(time.ticks_ms(), t0)
             if d > 0:
                 time.sleep_ms(d)
+    except KeyboardInterrupt:
+        # Ctrl-C over USB: hand both buffers back (a memory-starved REPL resets or freezes mid-upload)
+        # and keep the watchdog fed so the REPL stays usable. The timer runs inside the
+        # interpreter, so a frozen REPL still gets reset.
+        reserve(g, False)
+        C.delete()
+        machine.Timer(3).init(period=10000, callback=lambda t: wdt.feed())
+        raise
     except Exception as e:
-        # Ctrl-C over USB is not an Exception, so it still drops to the REPL for updates.
         import sys
         sys.print_exception(e)
         L.fillScreen(BK)

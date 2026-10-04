@@ -10,5 +10,8 @@ Read `README.md` first, especially **Learnings and gotchas**: most "obvious" cha
   user to check the real device.
 - Never commit `device/clawd_secrets.py` (WiFi credentials; git-ignored).
 - Memory is the constraint (about 60 KB of MicroPython heap, no PSRAM). Keep the drawing buffer allocated
-  first at boot, keep WiFi off between checks, keep the 24 KB reserve, keep notes 40 ms or longer.
+  first at boot, keep WiFi off between checks, keep the memory reserve, keep notes 40 ms or longer.
+  `.delete()` every canvas you stop using, including failed (0 x 0) ones: they leak otherwise.
+- Judge memory only at a real boot (`tools/boot_check.py`), never from the test: compiling the test uses memory.
+- Ctrl-C stops Clawd and his screen looks frozen. Always restart him afterwards (`--reset-after`).
 - Before deploying, check for duplicate top-level names (the README has a one-liner); a clash already broke a scene.

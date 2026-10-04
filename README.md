@@ -121,6 +121,21 @@ changes them per minute (`F_RATE`, `E_RATE`, `J_RATE`, `S_RATE` tables). Effects
   while he sleeps.
 - Tab mutes everything; a crossed-out speaker appears in the header.
 
+### Battery
+
+Clawd runs unplugged on the Cardputer's built-in battery and needs nothing from the Mac; the Mac is
+only for updates.
+
+- **Header icon:** a small battery at the far right. Green above 50%, yellow above 20%, red below.
+  A white lightning bolt shows while charging.
+- **Below 15% and not charging:** the icon blinks and he says "low!" now and then.
+- **Battery life** hasn't been measured. The screen is always on and he animates constantly, so
+  expect hours, not days. He keeps running while charging over USB-C.
+- **After the battery runs flat or the power switch goes off,** the clock is forgotten. He fetches
+  it again over WiFi at the next boot. His needs are saved every 5 minutes.
+- **Watchdog:** if he ever freezes, the chip restarts itself within a minute and boots back into
+  Clawd.
+
 ---
 
 ## Hardware and firmware
@@ -211,7 +226,8 @@ Press **?** on the device to see this list.
 | Tab | Mute / unmute. |
 | ? or Esc (Fn + top-left key) | Show / hide the key list. Any key closes it (that key does nothing else). |
 
-There is no exit key: the device only runs Clawd. Over USB, Ctrl-C drops to the MicroPython REPL.
+There is no exit key: the device only runs Clawd. Over USB, Ctrl-C stops him and drops to the
+MicroPython REPL. His screen then keeps its last frame and **looks frozen until he is restarted**.
 
 ---
 
@@ -222,13 +238,20 @@ There is no exit key: the device only runs Clawd. Over USB, Ctrl-C drops to the 
 1. UIFlow's own `boot.py` reads NVS key `uiflow.boot_option`. With value 2 it runs `/flash/main.py`
    instead of UIFlow's launcher (which would also start Bluetooth pairing).
 2. `device/main.py` calls `M5.begin()` and imports `clawd_core`, which is the precompiled
-   `/flash/clawd_core.mpy`.
+   `/flash/clawd_core.mpy`. If `/flash/skip_clawd_once` exists, it deletes it and stays at an idle
+   REPL instead; `run_on_device.py --fresh` uses this for tests.
 3. `clawd_core.run()` allocates the 240 × 97 drawing buffer **first**. Memory for it is only free
    this early; see [Learnings](#learnings-and-gotchas).
 4. `sync(g)`: blocking WiFi connect (`clawd_wifi.connect`, also sets the clock via NTP), weather
    fetch, WiFi off.
-5. Speaker set-up tone, then `reserve(g, True)` holds back 24 KB of memory for later WiFi trips.
-6. Loads saved needs, then enters the main loop.
+5. Speaker set-up tone, then `reserve(g, True)` holds back memory for later WiFi trips: 24 KB, or
+   16 or 10 KB if that doesn't fit. Retried every 5 s until it succeeds.
+6. Loads saved needs, reads the battery, starts the hardware watchdog (60 s) and enters the main
+   loop, which feeds the watchdog every frame.
+
+When stopped with Ctrl-C over USB, Clawd hands back both buffers so the REPL has memory for
+uploads. He also starts a timer that keeps feeding the watchdog; it can't be switched off once
+started. If the REPL itself freezes, the timer stops too and the watchdog restarts the chip.
 
 ### Main loop (`run()`, one frame ≈ 75 ms)
 
@@ -245,8 +268,8 @@ stats(...) every 5 s, save(...) every 5 min, net_step(g) every frame
 
 ### Screen layout
 
-- **Header**, y 0–20, drawn directly on the LCD: activity label on the left (orange); mute icon,
-  temperature/humidity and clock on the right.
+- **Header**, y 0–20, drawn directly on the LCD: activity label on the left (orange). On the
+  right, from left to right: mute icon (only when muted), temperature/humidity, clock, battery.
 - **Play area**, y 21–117: the 240 × 97 canvas. Floor line at canvas y = 86.
 - **Footer**, y 118–134: "press ? for keys", or what you're typing.
 
@@ -332,9 +355,13 @@ needs and reboots. Ctrl-C over USB is not an `Exception`, so it drops to the REP
 # edit device/clawd_core.py, then:
 python3 tools/deploy.py
 python3 tools/run_on_device.py tools/device_test.py --fresh --reset-after     # a few minutes; expect "RESULT 0 failure(s)"
+python3 tools/run_on_device.py tools/boot_check.py --reset-after              # ~30 s after a normal boot: what his start-up got
 python3 tools/run_on_device.py --listen 300                                   # watch Clawd's log lines
 python3 tools/render_screenshots.py                                           # see what it looks like (no device needed)
 ```
+
+- **Always restart him after USB work** (`--reset-after`, or `import machine; machine.reset()`).
+  A stopped Clawd looks frozen, and the user once reported exactly that "freeze".
 
 - **See the screen with `render_screenshots.py`.** The device can't read pixels back (no
   `readPixel` on the LCD or the canvas), and in the on-device test the canvas is usually 0 × 0, so
@@ -349,11 +376,15 @@ python3 tools/render_screenshots.py                                           # 
     legs poking out under the bed and the volleyball score disappearing into the sun.
   - It can't catch memory problems; only the device shows those. Ask the user to confirm on the
     real screen.
-- **Wait a few seconds after a deploy before running the test.** The device is still rebooting,
-  and a run started too early can exit without output.
-- **Log lines** go to USB serial: `clawd: weather 16.6 79 1`, `clawd: weather failed: ...`, `clawd:
-  could not reserve memory for WiFi`. Anything printed in the first second after a reboot is lost
+- **Wait a few seconds after a deploy before running the test.** The device is still rebooting.
+  The tools retry entering paste mode for a while, but they can still time out.
+- **Log lines** go to USB serial: `clawd: weather 16.6 79 1`, `clawd: weather failed: ...`,
+  `clawd: wifi connected to <name>`. Anything printed in the first second after a reboot is lost
   while USB reconnects.
+- **Checking a real boot:** `boot_check.py` reads `clawd_buf` (drawing buffer size) and `clawd_res`
+  (reserve bytes). Clawd publishes both through `builtins`, so they survive Ctrl-C. The on-device
+  test can't judge the reserve, because compiling the test script itself uses the memory the
+  reserve would take.
 - **REPL:** connect with `screen /dev/cu.usbmodem1101 115200` in a real terminal (it fails inside
   tools without a TTY) and press Ctrl-C. Only one program can hold the port. Restart Clawd with
   `import machine; machine.reset()`.
@@ -374,6 +405,9 @@ python3 tools/render_screenshots.py                                           # 
 | Font | `M5.Lcd.FONTS.DejaVu9` |
 | `M5.Lcd.setBrightness(0-255)` | Clawd uses 30 while sleeping. |
 | `M5.Speaker.tone(freq, ms)` | Non-blocking; also `.stop()` and `.isPlaying()`. |
+| `M5.Power.getBatteryLevel()`, `.isCharging()` | 0–100 and a bool. Plugged in it reported 100 and True (4200 mV from `.getBatteryVoltage()`). |
+| `machine.WDT(timeout=ms)` | Hardware watchdog; `.feed()`. Cannot be stopped once started. |
+| `machine.Timer(3).init(period=ms, callback=f)` | Periodic callback that runs inside the interpreter (not during a firmware-level hang). |
 | `hardware.MatrixKeyboard()` | Call `.tick()` then `.get_key()`; returns an int or `None`. |
 | `esp32.idf_heap_info(esp32.HEAP_DATA)` | System (non-MicroPython) memory: per block, (total, free, largest). |
 
@@ -474,6 +508,26 @@ These cost the most time; each one is a trap for future changes.
     takes an 8-field tuple in UTC. CPython uses local time and 9 fields. That's why UK summer time
     is computed by hand in `uk_off()`, and why the renderer swaps in `gmtime` and `calendar.timegm`.
 
+17. **A failed canvas leaks memory unless you delete it.** When `newCanvas` can't fit, it returns
+    a 0 × 0 canvas but still permanently leaks about 356 bytes of system memory, even after
+    `gc.collect()`. Calling `.delete()` on the failed canvas stops the leak. Measured: 40 failed
+    attempts took system memory from 18.5 KB to 4.7 KB; with `.delete()` it stayed flat. Before
+    the fix, the 5-second reserve retry would have crashed the device within minutes.
+
+18. **A stopped Clawd starves the REPL.** After Ctrl-C his drawing buffer and reserve (70 KB)
+    stayed allocated. The REPL then had about 18 KB of system memory, and uploads reset the device
+    or froze it completely, with no answer even to Ctrl-C. He now hands both back on Ctrl-C, which
+    leaves about 90 KB.
+
+19. **Test scripts change the memory picture.** A test script is compiled on the device, which
+    grows MicroPython's heap into system memory a real boot never uses. Only judge memory-sensitive
+    things (the reserve, WiFi) at a real boot (`boot_check.py`) or from tiny probe scripts.
+
+20. **The watchdog is the safety net for unattended use.** `machine.WDT` can't be stopped, so the
+    Ctrl-C handler starts a `machine.Timer` to keep feeding it while someone uses the REPL. With
+    nothing feeding it, the device restarted itself as expected; with the timer, the REPL stayed
+    alive for 75+ seconds.
+
 ---
 
 ## Ideas not yet built
@@ -505,7 +559,8 @@ device/                       everything that runs on the Cardputer
 tools/                        runs on the Mac
   deploy.py                   compile + upload + set boot mode + reboot
   run_on_device.py            run a MicroPython script on the device with live output, or --listen
-  device_test.py              the on-device test (53 checks)
+  device_test.py              the on-device test (56 checks)
+  boot_check.py               what a real boot got: drawing buffer, memory reserve, free memory
   render_screenshots.py       render scenes to PNG on the Mac with the real drawing code
   device_serial.py            REPL paste-mode helpers shared by the tools
   requirements.txt

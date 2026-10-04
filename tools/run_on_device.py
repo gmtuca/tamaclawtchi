@@ -3,7 +3,7 @@
 
     python3 tools/run_on_device.py tools/device_test.py --fresh --reset-after
     python3 tools/run_on_device.py --listen 300     # print Clawd's log lines for 5 minutes
---fresh reboots first so the script sees fresh-boot memory; --reset-after reboots into Clawd.
+--fresh reboots without starting Clawd, so the script gets fresh-boot memory; --reset-after reboots into Clawd.
 """
 
 import argparse
@@ -49,9 +49,10 @@ def main():
 
     if args.fresh:
         ds.interrupt(s)
+        ds.run(s, "open('/flash/skip_clawd_once', 'w').close()")   # main.py skips Clawd for one boot
         ds.reset(s)
         s.close()
-        s = reopen(port, 25)
+        s = reopen(port, 8)
     ds.interrupt(s)
     with open(args.script) as fh:
         ds.start(s, fh.read())

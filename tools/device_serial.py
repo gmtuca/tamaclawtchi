@@ -49,8 +49,15 @@ def interrupt(s):
 
 def start(s, code):
     """Send code in paste mode and start it; the caller reads the output."""
-    s.write(b"\x05")
-    read_until(s, b"=== ", 3)
+    for attempt in range(4):   # right after a reboot Clawd may still be in his blocking WiFi start-up
+        s.write(b"\x05")
+        try:
+            read_until(s, b"=== ", 3)
+            break
+        except TimeoutError:
+            if attempt == 3:
+                raise
+            interrupt(s)
     for line in code.splitlines():
         s.write(line.encode() + b"\r")
         time.sleep(0.003)
