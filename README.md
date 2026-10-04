@@ -40,10 +40,13 @@ and the real screen dims while he sleeps.
 4. [Using it](#using-it)
 5. [How it works](#how-it-works)
 6. [Development workflow](#development-workflow)
-7. [Learnings and gotchas](#learnings-and-gotchas)
-8. [Ideas not yet built](#ideas-not-yet-built)
-9. [Repository layout](#repository-layout)
-10. [Credits](#credits)
+7. [Memory budget](#memory-budget)
+8. [Learnings and gotchas](#learnings-and-gotchas)
+9. [Bugs found and fixed](#bugs-found-and-fixed)
+10. [Follow-up steps and open questions](#follow-up-steps-and-open-questions)
+11. [Ideas not yet built](#ideas-not-yet-built)
+12. [Repository layout](#repository-layout)
+13. [Credits](#credits)
 
 ---
 
@@ -413,6 +416,36 @@ python3 tools/render_screenshots.py                                           # 
 
 ---
 
+## Memory budget
+
+Memory is the constraint behind almost every design decision here. There are two pools:
+
+- **MicroPython heap:** Python objects. About 60 KB free at boot. It grows into system memory when
+  it runs short and never gives that back.
+- **System memory** ("IDF heap", `esp32.idf_heap_info(esp32.HEAP_DATA)`): drawing buffers, the
+  WiFi driver, network buffers, the speaker. Big buffers need one contiguous block.
+
+Measured on this device, following Clawd's real start-up order:
+
+| Moment | System memory free | Largest block |
+|---|---|---|
+| Fresh boot, before Clawd | 120.8 KB | 77.8 KB |
+| After the 240 × 97 drawing buffer (46.6 KB) | 73.3 KB | 32.8 KB |
+| After WiFi connect + weather fetch | 51.6 KB | 31.7 KB |
+| After the speaker's first tone (takes 8 KB once) | 43.7 KB | 31.7 KB |
+| After the 24 KB memory reserve, while running | about 18 KB | 7.7 KB |
+| After Ctrl-C, once Clawd hands both buffers back | about 90 KB | 47 KB |
+| Old version, after 7 minutes without the reserve | 13.8 KB | 7.7 KB |
+
+- **Costs:** connecting WiFi costs about 3 KB (net) once the driver has started. The compiled
+  `clawd_core.mpy` is about 25 KB on disk; its in-memory size wasn't measured.
+- **The drawing buffer** only fits at boot; at the launcher's 7.5 KB largest block, `newCanvas`
+  silently returned 0 × 0.
+- **Free memory after a fetch varies** from boot to boot, by tens of KB, probably network buffers
+  that linger. That's why the reserve falls back to smaller sizes and retries.
+
+---
+
 ## Learnings and gotchas
 
 These cost the most time; each one is a trap for future changes.
@@ -527,6 +560,58 @@ These cost the most time; each one is a trap for future changes.
     Ctrl-C handler starts a `machine.Timer` to keep feeding it while someone uses the REPL. With
     nothing feeding it, the device restarted itself as expected; with the timer, the REPL stayed
     alive for 75+ seconds.
+
+---
+
+## Bugs found and fixed
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Couldn't load code onto the device at all | Stock PikaScript firmware has no file transfer | Flashed UIFlow 2 (MicroPython) |
+| `MemoryError` when importing the app | Device can't compile a 28 KB `.py` | Precompile to `.mpy` with mpy-cross 1.27 |
+| Middle of the screen black; header and footer fine | Drawing buffer silently 0 × 0 when started from UIFlow's launcher | Boot straight into Clawd; allocate the buffer first; removed the launcher and other apps |
+| Continuous low buzz until the next sound | A 1 ms tone never ends on this firmware | 20 ms set-up tone at 18 kHz, plus `stop()` after every tune |
+| "Dancing" drew the bedroom | Dance tune and dancing scene both named `DANCE` | Renamed to `DANCE_TUNE`; the test checks the routine runs |
+| Hourly weather stopped working (WiFi stuck "idle") | MicroPython's heap grew into WiFi's memory | Memory reserve released only for WiFi trips |
+| Clawd's legs showed under the bed | Breathing bob moved his feet below the bed base | Bed base extended to the floor |
+| Volleyball score unreadable at midday | Drawn straight over the sun | Dark box behind the score |
+| Device crashed minutes after the reserve failed | Failed canvases leak 356 bytes each; retried every 5 s | `.delete()` failed canvases |
+| Uploads reset the device mid-way; once froze it completely | A stopped Clawd kept 70 KB, starving the REPL | Hand both buffers back on Ctrl-C; watchdog as a backstop |
+| "Moves for 10 seconds then freezes" | Not a bug: a tool stopped Clawd over USB and didn't restart him | Tools restart him (`--reset-after`); README warns |
+| Test runs failing on WiFi or the reserve | Test ran after Clawd had booted (his buffers still held), and the test script's own compile uses memory | `--fresh` boots without Clawd; reserve judged by `boot_check.py` |
+
+---
+
+## Follow-up steps and open questions
+
+Unverified or unfinished; check these first when resuming.
+
+1. **Battery icon unplugged.** Plugged in, the chip reported 100% and charging. Unplug him and
+   confirm the lightning bolt disappears. If it doesn't, `isCharging()` may always be True; derive
+   charging from `getBatteryVoltage()` (4200 mV while charging) or `getVBUSVoltage()` (returned -1
+   when plugged in, so it may not help).
+2. **Battery life.** Not measured. Leave him unplugged from full and note when he dies. If it's
+   short, ideas: lower brightness during the day, slow the frame rate while he's sitting still,
+   dim further at night.
+3. **The work network.** Joining the second network in `clawd_secrets.py` (the office) has never
+   been tested; it was out of range during development. At the office, watch for
+   `clawd: wifi connected to <office network>` with
+   `run_on_device.py --listen` after a reboot. Or wait: the hourly check should fail on the home
+   network and switch about 5 minutes later.
+4. **The occasional buzz before the 1 ms tone existed.** The user heard a buzz "sometimes" earlier
+   too. `stop()` after every tune should cover it, but the original cause wasn't found.
+5. **The complete REPL freeze.** Once, after Ctrl-C, the device stopped answering USB entirely and
+   needed a power cycle. The likely cause, memory starvation, is fixed, and the watchdog would now
+   restart it. It hasn't recurred, but it wasn't reproduced on demand either.
+6. **Long-run memory.** The longest measured run is 7 minutes (four weather checks at 2-minute
+   intervals). Run a day with `run_on_device.py --listen 86400` (or check `boot_check.py` after
+   hours) to confirm the hourly weather keeps working and the reserve holds.
+7. **Frame time.** Not measured since weather, holidays and the battery icon were added. Time
+   `tick` + `push` + `hud` on the device; the budget is 75 ms.
+8. **Side-activity frequency.** About one per 45 minutes awake was chosen without feedback; tune
+   `rnd(int(45 / mins))` in `stats()` if it feels too busy or too quiet.
+9. **Holidays on the real screen.** Checked only in the renderer and by faking the date in the
+   test. Halloween (31 Oct) is the first real one.
 
 ---
 
