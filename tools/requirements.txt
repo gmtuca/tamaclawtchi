@@ -3,3 +3,5 @@ pyserial==3.5
 mpy-cross==1.27.0.post2
 # Only needed to flash UIFlow firmware onto a new device
 esptool>=4.8
+# Only needed for tools/render_screenshots.py
+pillow>=10.1

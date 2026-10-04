@@ -38,14 +38,12 @@ f = 0
 
 def frames(n):
     global f
-    m = 0
     for i in range(n):
         m = c.tick(C, g, f)
         C.push(0, c.TOP)
         c.hud(g, m, f, i == 0)
         c.sound(g)
         f += 1
-    return m
 
 
 def at(hh, mm):

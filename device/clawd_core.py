@@ -467,6 +467,8 @@ def sc_sleep(C, g, f):
     cl(C, g, x, SY + br, "c" if awake else "x", "up" if g.eat_t else "side")
     C.fillRect(40, 62 + br, 108, 18, BL)
     C.fillRect(40, 62 + br, 108, 3, BL2)
+    C.fillRect(32, 80, 116, FLOOR - 78, WD2)   # bed base down to the floor, hiding his legs
+    C.fillRect(32, FLOOR, 116, 1, WD)
     if not awake and f % 36 == 0:
         spawn(g, 3, x + 62, SY - 4, 0.4, -0.6, 44, CR)
 
@@ -816,9 +818,11 @@ def sc_volley(C, g, f, m):
         g.ovy += 1
         if g.ojy >= 0:
             g.ojy = g.ovy = 0
-    C.setTextColor(BK if 360 <= m < 1200 else CR)
     s = "%d : %d" % (g.score[0], g.score[1])
-    C.drawString(s, 120 - C.textWidth(s) // 2, 2)
+    tw = C.textWidth(s)
+    C.fillRoundRect(116 - tw // 2, 1, tw + 8, 12, 4, DK)   # readable over the sun or any sky
+    C.setTextColor(CR)
+    C.drawString(s, 120 - tw // 2, 2)
     cl(C, g, 144, SY + g.ojy, "l" if f % 50 > 1 else "x", "up" if g.ojy else "side",
        (f // 4) % 2 if g.ojy else 0, 0, FC)
     eyes = "x" if f % 50 < 2 else ("l" if b[0] < 96 else "r")
@@ -1339,16 +1343,21 @@ def net_step(g):
     connected = sta.isconnected()
     if not connected and time.ticks_diff(now, g.net_t) < 20000:
         return
+    import clawd_wifi
     ok = connected and fetch_weather(g)
     if connected:
         if not clock_ok() or time.ticks_diff(now, g.next_ntp) >= 0:
-            import clawd_wifi
             if clawd_wifi.sync_clock():
                 g.next_ntp = time.ticks_add(now, 86400000)
+        retry = 600000
+    else:
+        print("clawd: could not join", clawd_wifi.current())
+        clawd_wifi.next_network()   # e.g. moved from home to the office
+        retry = 300000
     sta.active(False)
     reserve(g, True)
     g.net_t = None
-    g.next_net = time.ticks_add(now, NET_MS if ok else 600000)
+    g.next_net = time.ticks_add(now, NET_MS if ok else retry)
 
 
 def load(g):

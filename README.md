@@ -13,6 +13,23 @@ dedicated Clawd machine: it boots straight into Clawd, with no menu.
 Everything here was built in one long Claude Code session. The **Learnings** section records every
 hardware and firmware surprise found along the way; read it before changing anything.
 
+## Screenshots
+
+| | |
+|---|---|
+| ![Working at the computer](docs/screenshots/work.png) **10:30, working**: types while code scrolls | ![Morning coffee](docs/screenshots/coffee.png) **08:05, coffee**: sunrise in the window |
+| ![Biking to work in the rain](docs/screenshots/commute.png) **08:50, biking to work**: in the rain | ![Lunch](docs/screenshots/lunch.png) **12:15, lunch**: a fish, bite by bite |
+| ![A fish dropping in](docs/screenshots/feed.png) **Feeding**: press any letter and a fish drops in | ![Volleyball](docs/screenshots/volleyball.png) **Volleyball**: a side activity against a blue crab |
+| ![Bike ride](docs/screenshots/bike.png) **Bike ride**: through the countryside | ![Listening to music](docs/screenshots/music.png) **Music**: headphones, bean bag, record player |
+| ![Dancing](docs/screenshots/dance.png) **Dancing**: under a disco ball | ![TV time](docs/screenshots/tv.png) **21:00, TV time**: with popcorn |
+| ![Asleep at Christmas](docs/screenshots/sleep-xmas.png) **02:00 on Christmas**: snow, fairy lights, Santa hat | ![Reading on Halloween](docs/screenshots/read-halloween.png) **22:40 on Halloween**: fog, pumpkin, witch's hat |
+| ![The key list](docs/screenshots/keys.png) **Press `?`**: every key and command | |
+
+These are rendered on a Mac by `tools/render_screenshots.py`, which runs the real
+`device/clawd_core.py` against a stand-in for the device's graphics library. Shapes, layout and
+animation frames are what the device draws. Fonts, colours and brightness are close but not exact,
+and the real screen dims while he sleeps.
+
 ---
 
 ## Contents
@@ -149,10 +166,10 @@ onboarding script installed them.
 
 ```bash
 git clone https://github.com/gmtuca/tamaclawtchi && cd tamaclawtchi
-pip install -r tools/requirements.txt        # pyserial, mpy-cross 1.27, esptool
+pip install -r tools/requirements.txt        # pyserial, mpy-cross 1.27, esptool, pillow
 
 cp device/clawd_secrets.example.py device/clawd_secrets.py
-# edit it: your 2.4 GHz WiFi name and password (the file is git-ignored)
+# edit it: list your 2.4 GHz WiFi networks as (name, password) (the file is git-ignored)
 
 # Plug the Cardputer in with a data cable, switch it on, then:
 python3 tools/deploy.py --clean              # first time; later just: python3 tools/deploy.py
@@ -161,6 +178,19 @@ python3 tools/deploy.py --clean              # first time; later just: python3 t
 `deploy.py` compiles `device/clawd_core.py` to `build/clawd_core.mpy` and uploads the files to
 `/flash`. It then sets UIFlow's NVS `boot_option` to 2 (boot runs `/flash/main.py`) and reboots.
 Clawd appears after a few seconds ("Clawd is waking up... checking the clock and weather").
+
+`clawd_secrets.py` holds a list of networks, for example home and work:
+
+```python
+NETWORKS = [
+    ("home-network-name", "home-password"),
+    ("work-network-name", "work-password"),
+]
+```
+
+At boot Clawd scans and joins the strongest network on the list. If an hourly check can't connect
+(say you carried him from home to the office), he moves on to the next network and tries again 5
+minutes later. The older one-network format (`SSID = ...`, `PASSWORD = ...`) still works.
 
 Without `clawd_secrets.py`, Clawd still runs, but with no weather and no clock sync. If the clock
 was never set, the footer says "clock not set: type an hour + enter".
@@ -269,8 +299,15 @@ Clawd is the Claude Code logo mascot, decoded from its terminal block characters
 - `net_step()` runs every frame. Once an hour it releases the memory reserve and starts a
   connection without waiting for it. On later frames it checks whether the connection is up; only
   the HTTP fetch itself (about 0.5 s) blocks. Then WiFi goes off and the reserve is claimed again.
-- A failed fetch retries after 10 minutes. The clock is re-synced daily, or whenever it's unset.
-  NTP sometimes times out; that's harmless because it retries.
+- **Several networks** (`clawd_wifi.py`):
+  - At boot, `connect()` scans, picks the known network with the strongest signal, and falls back
+    through the rest of the list.
+  - The hourly `begin()` doesn't scan, because scanning blocks for about 2 seconds and would freeze
+    the animation. It reuses the network that worked last.
+  - If joining fails within 20 s, `net_step()` moves to the next network and retries in 5 minutes.
+- A failed fetch on a working connection retries after 10 minutes. The clock is re-synced daily, or
+  whenever it's unset. NTP sometimes times out; that's harmless because it retries.
+- Log lines name the network: `clawd: wifi connected to <name>`, `clawd: could not join <name>`.
 - The weather fetch is a plain-HTTP socket request to `api.open-meteo.com`, with
   `current=temperature_2m,relative_humidity_2m,weather_code`. WMO weather codes are mapped by
   `wkind()` to clear, partly cloudy, overcast, fog, rain, snow or storm.
@@ -296,11 +333,24 @@ needs and reboots. Ctrl-C over USB is not an `Exception`, so it drops to the REP
 python3 tools/deploy.py
 python3 tools/run_on_device.py tools/device_test.py --fresh --reset-after     # a few minutes; expect "RESULT 0 failure(s)"
 python3 tools/run_on_device.py --listen 300                                   # watch Clawd's log lines
+python3 tools/render_screenshots.py                                           # see what it looks like (no device needed)
 ```
 
-- **Visual checks need a human.** Neither the LCD nor the canvas can read pixels back, so there's
-  no screenshot. In the test the canvas is usually 0 × 0, so draws do nothing (see Learnings). The
-  test proves the code runs, not that it looks right; ask the user to look.
+- **See the screen with `render_screenshots.py`.** The device can't read pixels back (no
+  `readPixel` on the LCD or the canvas), and in the on-device test the canvas is usually 0 × 0, so
+  draws do nothing there (see Learnings).
+  - The renderer runs the real `clawd_core.py` on the Mac, with stand-ins for `M5`, `machine`,
+    `network`, `hardware` and the MicroPython-only `time` functions. Drawing calls go to a Pillow
+    image.
+  - Each entry in `SHOTS` sets a time, weather, holiday or side activity, plus an optional hook
+    (for example, pressing a key on frame 0). It runs N frames and saves the last one to
+    `docs/screenshots/`.
+  - Add a shot for anything you change, look at the PNG, then deploy. It already caught Clawd's
+    legs poking out under the bed and the volleyball score disappearing into the sun.
+  - It can't catch memory problems; only the device shows those. Ask the user to confirm on the
+    real screen.
+- **Wait a few seconds after a deploy before running the test.** The device is still rebooting,
+  and a run started too early can exit without output.
 - **Log lines** go to USB serial: `clawd: weather 16.6 79 1`, `clawd: weather failed: ...`, `clawd:
   could not reserve memory for WiFi`. Anything printed in the first second after a reboot is lost
   while USB reconnects.
@@ -409,14 +459,20 @@ These cost the most time; each one is a trap for future changes.
     Bluetooth advertisement that breaks later Bluetooth use. `boot_option = 2` plus our own
     `main.py` avoids its launcher entirely (`deploy.py` sets it).
 
-14. **Testing without a screen.** There is no way to read the display back, so the on-device test
-    drives the real code (keys, scenes, events) and checks state. Run it from a fresh boot
-    (`--fresh`): a REPL session that has run a while has a fragmented heap and gives false
-    failures, especially for WiFi.
+14. **Testing without a screen.** There is no way to read the display back. Two tools split the
+    job:
+    - The on-device test drives the real code (keys, scenes, events) and checks state. Run it from
+      a fresh boot (`--fresh`): a REPL session that has run a while has a fragmented heap and gives
+      false failures, especially for WiFi.
+    - `render_screenshots.py` shows what is drawn. Use both.
 
 15. **Frame budget.** A scene is roughly 30–100 draw calls plus one 46 KB push to the screen,
     within a 75 ms frame. Animation has looked smooth at that rate, but frame time hasn't been
     measured since the weather and holidays were added. Keep per-frame allocation low.
+
+16. **MicroPython's `time` has no time zones.** `time.localtime()` is UTC, and `time.mktime()`
+    takes an 8-field tuple in UTC. CPython uses local time and 9 fields. That's why UK summer time
+    is computed by hand in `uk_off()`, and why the renderer swaps in `gmtime` and `calendar.timegm`.
 
 ---
 
@@ -444,14 +500,16 @@ Discussed with the user; none are started.
 device/                       everything that runs on the Cardputer
   main.py                     /flash/main.py: boots straight into Clawd
   clawd_core.py               the whole app (compiled to clawd_core.mpy by deploy.py)
-  clawd_wifi.py               WiFi connect / NTP helpers
-  clawd_secrets.example.py    copy to clawd_secrets.py (git-ignored) with your WiFi details
+  clawd_wifi.py               WiFi: pick a known network, connect, NTP
+  clawd_secrets.example.py    copy to clawd_secrets.py (git-ignored) with your WiFi networks
 tools/                        runs on the Mac
   deploy.py                   compile + upload + set boot mode + reboot
   run_on_device.py            run a MicroPython script on the device with live output, or --listen
   device_test.py              the on-device test (53 checks)
+  render_screenshots.py       render scenes to PNG on the Mac with the real drawing code
   device_serial.py            REPL paste-mode helpers shared by the tools
   requirements.txt
+docs/screenshots/             the PNGs shown above (regenerate with render_screenshots.py)
 AGENTS.md                     short orientation for coding agents
 ```
 
