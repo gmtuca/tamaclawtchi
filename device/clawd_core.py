@@ -50,7 +50,7 @@ LABEL = ("sleeping", "coffee", "working", "lunch", "workout", "tv time", "playti
          "commute", "bike ride", "volleyball", "cartwheels", "dancing", "yoga", "music")
 HOME = (36, 56, 44, 44, 84, 40, 84, 70, 84, 84, 24, 84, 84, 84, 50)
 EVENTS = (("dream", "roll"), ("wander", "look", "stretch", "hop"),
-          ("think", "ship", "bug", "idea", "stretch", "look", "wander"),
+          ("think", "bug", "idea", "stretch", "look", "wander"),
           ("look", "hop"), (), ("laugh", "popcorn", "look"), (), ("yawn", "page"),
           (), (), (), (), (), (), ())
 # Per-minute stat changes by scene:
@@ -62,6 +62,7 @@ S_RATE = (-0.06, -0.06, -0.06, -0.06, 1.5, -0.06, 0.4, -0.06, 1.2, 1.2, 1.2, 1.0
 DUR = {"wander": 170, "look": 48, "stretch": 36, "hop": 20, "think": 80, "ship": 45,
        "bug": 70, "idea": 40, "dream": 90, "roll": 40, "laugh": 32, "popcorn": 24,
        "yawn": 36, "page": 14}
+SHIP_ODDS = 200   # 1 work event in 200 is "tests pass!": about once per 2 hours of work (~36 s per event)
 BUBBLES = {"bug": "?", "idea": "!", "dream": "fish", "laugh": "ha!", "yawn": "zz"}
 HELP = (("a-z", "feed him a fish"), ("space", "pet him"), ("arrows", "change activity"),
         ("1430 enter", "jump to 14:30"), ("enter", "back to live time"),
@@ -909,7 +910,7 @@ class G:
         self.ball, self.score, self.ojy, self.ovy = None, [0, 0], 0, 0
         self.hol, self.help, self.temp, self.hum, self.wk = None, 0, None, None, CLEAR
         self.net_t, self.next_net, self.next_ntp, self.res = None, 0, 0, None
-        self.bat, self.chg = None, False
+        self.bat = None
 
 
 def play(g, notes, reply=False):
@@ -1068,7 +1069,7 @@ def update(g, m):
         g.next_ev -= 1
         if g.next_ev <= 0:
             evs = EVENTS[sc]
-            start_ev(g, evs[rnd(len(evs))])
+            start_ev(g, "ship" if sc == WORK and rnd(SHIP_ODDS) == 0 else evs[rnd(len(evs))])
             g.next_ev = 220 + rnd(360)
     if g.eat_t:
         g.eat_t -= 1
@@ -1096,7 +1097,7 @@ def stats(g, mins, m):
         reserve(g, True)
     if sc == SLEEP:
         return
-    if g.bat is not None and g.bat < 15 and not g.chg and not g.bub and rnd(40) == 0:
+    if g.bat is not None and g.bat < 15 and not g.bub and rnd(40) == 0:
         g.bub, g.bub_t = "low!", 40
     elif g.hol and not g.bub and rnd(60) == 0:
         g.bub, g.bub_t = GREET[g.hol], 40
@@ -1172,20 +1173,17 @@ def key(g, k):
 
 def read_battery(g):
     try:
+        # No charging bolt: isCharging() is always True here, and voltage can't tell (README).
         g.bat = M5.Power.getBatteryLevel()
-        g.chg = bool(M5.Power.isCharging())
     except Exception:
         g.bat = None
 
 
-def battery(x, y, lvl, chg, blink_off):
+def battery(x, y, lvl, blink_off):
     L.drawRect(x, y, 14, 8, GR)
     L.fillRect(x + 14, y + 2, 2, 4, GR)
     if not blink_off:
         L.fillRect(x + 2, y + 2, max(1, lvl * 10 // 100), 4, GN if lvl > 50 else YL if lvl > 20 else RD)
-    if chg:
-        L.fillTriangle(x + 8, y - 1, x + 4, y + 4, x + 8, y + 4, CR)
-        L.fillTriangle(x + 6, y + 3, x + 10, y + 3, x + 6, y + 9, CR)
 
 
 def hud(g, m, f, force):
@@ -1200,9 +1198,9 @@ def hud(g, m, f, force):
         lab += " %dm" % (time.ticks_diff(g.side_end, time.ticks_ms()) // 60000 + 1)
     live = g.sim is None
     ck = "%02d:%02d" % (m // 60, m % 60) if clock_ok() or not live else "--:--"
-    low = g.bat is not None and g.bat < 15 and not g.chg
+    low = g.bat is not None and g.bat < 15
     blink_off = low and (f // 8) % 2
-    hk = (lab, ck, live, g.mute, g.temp, g.hum, g.bat, g.chg, blink_off)
+    hk = (lab, ck, live, g.mute, g.temp, g.hum, g.bat, blink_off)
     if force or hk != g.hk:
         g.hk = hk
         L.fillRect(0, 0, W, 20, DK)
@@ -1212,7 +1210,7 @@ def hud(g, m, f, force):
         x = W - 4
         if g.bat is not None:
             x -= 16
-            battery(x, 6, g.bat, g.chg, blink_off)
+            battery(x, 6, g.bat, blink_off)
             x -= 6
         s = ck if live else "~" + ck
         x -= L.textWidth(s)

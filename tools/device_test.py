@@ -27,6 +27,7 @@ try:
 except Exception:
     pass
 g = c.G()
+g.mute = True   # stays quiet all run, e.g. in an office (only the inaudible 18 kHz warm-up below)
 c.sync(g)
 check("weather fetched at boot", g.temp is not None, (g.temp, g.hum, g.wk))
 check("clock set", c.clock_ok(), time.localtime())
@@ -73,6 +74,11 @@ for hh, mm, want in SCHEDULE:
         c.start_ev(g, e)
         frames(8)
     check("schedule %02d:%02d" % (hh, mm), c.LABEL[g.scene] == want, c.LABEL[g.scene])
+    if g.scene == c.WORK:
+        check("tests pass is rare, not a normal work event", "ship" not in c.EVENTS[c.WORK], c.EVENTS[c.WORK])
+        c.start_ev(g, "ship")
+        frames(8)
+        check("tests pass still plays", g.ev == "ship", g.ev)
 
 at(12, 0)
 for s in c.SIDES:
@@ -131,9 +137,9 @@ c.key(g, ord("a"))
 frames(18)
 check("feeding when full refuses", g.bub == "full", g.bub)
 c.key(g, 0x09)
-check("tab mutes", g.mute)
-c.key(g, 0x09)
 check("tab unmutes", not g.mute)
+c.key(g, 0x09)
+check("tab mutes", g.mute)
 c.key(g, ord("?"))
 check("? opens the key list", g.help > 0)
 frames(3)
@@ -152,11 +158,11 @@ c.stats(g, 0.1, 720)
 check("hunger shows the fish bubble", g.bub == "fish", g.bub)
 
 c.read_battery(g)
-check("battery level reads 0-100", g.bat is not None and 0 <= g.bat <= 100, (g.bat, g.chg))
-for g.bat, g.chg in ((9, False), (9, True), (60, False)):
+check("battery level reads 0-100", g.bat is not None and 0 <= g.bat <= 100, g.bat)
+for g.bat in (9, 60):
     for i in range(10):
         c.hud(g, 720, i, i == 0)
-check("battery icon draws when low, charging and normal", True)
+check("battery icon draws when low and normal", True)
 
 gc.collect()
 print("INFO free memory", gc.mem_free())

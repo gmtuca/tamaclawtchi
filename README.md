@@ -130,8 +130,9 @@ Clawd runs unplugged on the Cardputer's built-in battery and needs nothing from 
 only for updates.
 
 - **Header icon:** a small battery at the far right. Green above 50%, yellow above 20%, red below.
-  A white lightning bolt shows while charging.
-- **Below 15% and not charging:** the icon blinks and he says "low!" now and then.
+  There is no charging indicator: the Cardputer can't tell whether it's plugged in (gotcha 21).
+- **Below 15%:** the icon blinks and he says "low!" now and then, plugged in or not.
+- **Power switch:** with it off he still runs from USB, but unplugging cuts the power.
 - **Battery life** hasn't been measured. The screen is always on and he animates constantly, so
   expect hours, not days. He keeps running while charging over USB-C.
 - **After the battery runs flat or the power switch goes off,** the clock is forgotten. He fetches
@@ -408,7 +409,7 @@ python3 tools/render_screenshots.py                                           # 
 | Font | `M5.Lcd.FONTS.DejaVu9` |
 | `M5.Lcd.setBrightness(0-255)` | Clawd uses 30 while sleeping. |
 | `M5.Speaker.tone(freq, ms)` | Non-blocking; also `.stop()` and `.isPlaying()`. |
-| `M5.Power.getBatteryLevel()`, `.isCharging()` | 0–100 and a bool. Plugged in it reported 100 and True (4200 mV from `.getBatteryVoltage()`). |
+| `M5.Power.getBatteryLevel()`, `.getBatteryVoltage()` | 0–100, and mV. `.isCharging()` is always True; see gotcha 21. |
 | `machine.WDT(timeout=ms)` | Hardware watchdog; `.feed()`. Cannot be stopped once started. |
 | `machine.Timer(3).init(period=ms, callback=f)` | Periodic callback that runs inside the interpreter (not during a firmware-level hang). |
 | `hardware.MatrixKeyboard()` | Call `.tick()` then `.get_key()`; returns an int or `None`. |
@@ -561,6 +562,13 @@ These cost the most time; each one is a trap for future changes.
     nothing feeding it, the device restarted itself as expected; with the timer, the REPL stayed
     alive for 75+ seconds.
 
+21. **The Cardputer can't tell whether it's charging.** `M5.Power.isCharging()` returns `True`
+    plugged in or not, and `getVBUSVoltage()` returns -1. Logged at 100%: unplugged, the battery
+    read a steady 4068–4098 mV; plugged in, 4104–4358 mV, jumping about. The two ranges are only
+    6 mV apart, and a half-empty battery on charge would read like an unplugged one, so Clawd shows
+    no charging bolt. Also: if he boots on battery and the cable goes in afterwards, the Mac may not
+    see him over USB; switch him off and on with the cable in.
+
 ---
 
 ## Bugs found and fixed
@@ -579,6 +587,7 @@ These cost the most time; each one is a trap for future changes.
 | Uploads reset the device mid-way; once froze it completely | A stopped Clawd kept 70 KB, starving the REPL | Hand both buffers back on Ctrl-C; watchdog as a backstop |
 | "Moves for 10 seconds then freezes" | Not a bug: a tool stopped Clawd over USB and didn't restart him | Tools restart him (`--reset-after`); README warns |
 | Test runs failing on WiFi or the reserve | Test ran after Clawd had booted (his buffers still held), and the test script's own compile uses memory | `--fresh` boots without Clawd; reserve judged by `boot_check.py` |
+| Charging bolt showed while unplugged | `isCharging()` is always True on the Cardputer, and voltage can't tell either | Removed the bolt (gotcha 21) |
 
 ---
 
@@ -586,31 +595,27 @@ These cost the most time; each one is a trap for future changes.
 
 Unverified or unfinished; check these first when resuming.
 
-1. **Battery icon unplugged.** Plugged in, the chip reported 100% and charging. Unplug him and
-   confirm the lightning bolt disappears. If it doesn't, `isCharging()` may always be True; derive
-   charging from `getBatteryVoltage()` (4200 mV while charging) or `getVBUSVoltage()` (returned -1
-   when plugged in, so it may not help).
-2. **Battery life.** Not measured. Leave him unplugged from full and note when he dies. If it's
+1. **Battery life.** Not measured. Leave him unplugged from full and note when he dies. If it's
    short, ideas: lower brightness during the day, slow the frame rate while he's sitting still,
    dim further at night.
-3. **The work network.** Joining the second network in `clawd_secrets.py` (the office) has never
+2. **The work network.** Joining the second network in `clawd_secrets.py` (the office) has never
    been tested; it was out of range during development. At the office, watch for
    `clawd: wifi connected to <office network>` with
    `run_on_device.py --listen` after a reboot. Or wait: the hourly check should fail on the home
    network and switch about 5 minutes later.
-4. **The occasional buzz before the 1 ms tone existed.** The user heard a buzz "sometimes" earlier
+3. **The occasional buzz before the 1 ms tone existed.** The user heard a buzz "sometimes" earlier
    too. `stop()` after every tune should cover it, but the original cause wasn't found.
-5. **The complete REPL freeze.** Once, after Ctrl-C, the device stopped answering USB entirely and
+4. **The complete REPL freeze.** Once, after Ctrl-C, the device stopped answering USB entirely and
    needed a power cycle. The likely cause, memory starvation, is fixed, and the watchdog would now
    restart it. It hasn't recurred, but it wasn't reproduced on demand either.
-6. **Long-run memory.** The longest measured run is 7 minutes (four weather checks at 2-minute
+5. **Long-run memory.** The longest measured run is 7 minutes (four weather checks at 2-minute
    intervals). Run a day with `run_on_device.py --listen 86400` (or check `boot_check.py` after
    hours) to confirm the hourly weather keeps working and the reserve holds.
-7. **Frame time.** Not measured since weather, holidays and the battery icon were added. Time
+6. **Frame time.** Not measured since weather, holidays and the battery icon were added. Time
    `tick` + `push` + `hud` on the device; the budget is 75 ms.
-8. **Side-activity frequency.** About one per 45 minutes awake was chosen without feedback; tune
+7. **Side-activity frequency.** About one per 45 minutes awake was chosen without feedback; tune
    `rnd(int(45 / mins))` in `stats()` if it feels too busy or too quiet.
-9. **Holidays on the real screen.** Checked only in the renderer and by faking the date in the
+8. **Holidays on the real screen.** Checked only in the renderer and by faking the date in the
    test. Halloween (31 Oct) is the first real one.
 
 ---
