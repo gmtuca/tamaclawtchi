@@ -672,3 +672,7 @@ own `boot.py`, `libs/`, `res/` and `certificate/` stay untouched.
   from it is included here.
 - Weather data: [Open-Meteo](https://open-meteo.com) (free for non-commercial use).
 - Keyboard codes from M5Stack's [uiflow-micropython](https://github.com/m5stack/uiflow-micropython).
+
+## License
+
+MIT, see [LICENSE](LICENSE). The licence covers the code here, not the Clawd character, which belongs to Anthropic.
